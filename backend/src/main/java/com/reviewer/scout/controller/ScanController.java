@@ -167,11 +167,7 @@ public class ScanController {
 
     @PostMapping("/{id}/mine")
     public ResponseEntity<?> mine(@PathVariable Long id) {
-        return scanRunRepo.findById(id).map(run -> {
-            scanService.mineTopics(run);
-            List<TopicLead> leads = topicLeadRepo.findByScanRunIdOrderByCreatedAtDesc(id);
-            return ResponseEntity.ok(leads);
-        }).orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.badRequest().body(Map.of("error", "旧版占位主题挖掘已停用，请进入领域梳理工作台生成可追溯的草稿。"));
     }
 
     @GetMapping("/{id}/articles")
@@ -216,10 +212,7 @@ public class ScanController {
 
     @PostMapping("/leads/{leadId}/check")
     public ResponseEntity<?> checkNovelty(@PathVariable Long leadId) {
-        return topicLeadRepo.findById(leadId).map(lead -> {
-            List<NoveltyCheck> checks = scanService.runNoveltyCheck(lead);
-            return ResponseEntity.ok(checks);
-        }).orElse(ResponseEntity.notFound().build());
+        return ResponseEntity.badRequest().body(Map.of("error", "旧版占位查重已停用。请在领域梳理中盘点已有综述；当前版本不提供全库新颖性结论。"));
     }
 
     @GetMapping("/leads/{leadId}/checks")

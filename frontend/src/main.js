@@ -9,7 +9,7 @@ import { refreshModels } from './lib/models'
 const ScanNew = () => import('./views/ScanNew.vue')
 const ScanDashboard = () => import('./views/ScanDashboard.vue')
 const ArticleList = () => import('./views/ArticleList.vue')
-const TopicMining = () => import('./views/TopicMining.vue')
+const TopicMining = () => import('./views/EvidenceWorkbench.vue')
 const ExpertList = () => import('./views/ExpertList.vue')
 const MailCenter = () => import('./views/MailCenter.vue')
 const TaskList = () => import('./views/TaskList.vue')

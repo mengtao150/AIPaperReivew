@@ -2,6 +2,7 @@ package com.reviewer.scout.service;
 
 import com.fasterxml.jackson.databind.*;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
 import javax.net.ssl.SSLException;
 import java.net.*;
@@ -14,6 +15,8 @@ import java.util.*;
 public class ChatGateway {
     private final HttpClient client;
     private final ObjectMapper mapper = new ObjectMapper();
+    @Value("${models.analysis-timeout-seconds:300}")
+    private int configuredAnalysisTimeoutSeconds = 300;
     public ChatGateway() { this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(12)).followRedirects(HttpClient.Redirect.NEVER).build()); }
     ChatGateway(HttpClient client) { this.client = client; }
     public URI endpoint(ModelConnection c) {
@@ -30,19 +33,36 @@ public class ChatGateway {
         catch (Exception e) { throw new IllegalArgumentException("模型服务域名无法解析，请检查 API 地址"); }
     }
     public String complete(ModelConnection c, List<Map<String, String>> messages, int maxTokens) {
+        return complete(c, messages, maxTokens, Duration.ofSeconds(90), false);
+    }
+    public int analysisTimeoutSeconds() { return Math.max(120, Math.min(900, configuredAnalysisTimeoutSeconds)); }
+    public String completeAnalysis(ModelConnection c, List<Map<String, String>> messages, int maxTokens) {
+        return complete(c, messages, maxTokens, Duration.ofSeconds(analysisTimeoutSeconds()), true);
+    }
+    private String complete(ModelConnection c, List<Map<String, String>> messages, int maxTokens, Duration timeout, boolean analysis) {
         URI uri = endpoint(c);
+        long started = System.nanoTime();
+        int inputChars = messages.stream().mapToInt(m -> Objects.toString(m.get("content"), "").length()).sum();
+        log.info("Model request: purpose={}, provider={}, model={}, inputChars={}, maxTokens={}, timeoutSeconds={}", analysis ? "evidence" : "chat", c.provider(), c.model(), inputChars, maxTokens, timeout.toSeconds());
         try {
             Map<String, Object> body = new LinkedHashMap<>(); body.put("model", c.model()); body.put("messages", messages); body.put("stream", false); body.put("max_tokens", maxTokens);
             if (Set.of("deepseek", "bigmodel", "zai", "bigmodel-coding", "zai-coding").contains(c.provider())) body.put("thinking", Map.of("type", "disabled"));
-            HttpRequest req = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(90)).header("Content-Type", "application/json").header("Authorization", "Bearer " + c.apiKey()).POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build();
+            HttpRequest req = HttpRequest.newBuilder(uri).timeout(timeout).header("Content-Type", "application/json").header("Authorization", "Bearer " + c.apiKey()).POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body))).build();
             HttpResponse<String> response = client.send(req, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) throw providerFailure(response.statusCode(), response.body(), c.provider());
             JsonNode choice = mapper.readTree(response.body()).path("choices").path(0);
             if ("length".equals(choice.path("finish_reason").asText())) throw new ModelConnectionException("output_truncated", "模型输出被截断，请重试或调整模型", 200);
             String content = choice.path("message").path("content").asText("").trim();
             if (content.isBlank() || content.length() > 100000) throw new ModelConnectionException("invalid_response", "模型服务已响应，但未返回有效文本，请检查模型兼容性", 200);
+            log.info("Model completed: provider={}, model={}, elapsedMs={}, outputChars={}", c.provider(), c.model(), (System.nanoTime()-started)/1_000_000, content.length());
             return content;
-        } catch (HttpTimeoutException e) { throw new ModelConnectionException("timeout", "等待模型响应超时，请稍后重试或切换模型", null); }
+        } catch (HttpConnectTimeoutException e) {
+            log.warn("Model connection timeout: provider={}, model={}, elapsedMs={}", c.provider(), c.model(), (System.nanoTime()-started)/1_000_000);
+            throw new ModelConnectionException("network_error", "连接模型服务超时，尚未建立连接。请检查本机网络、代理和 API 地址后重试。" + (analysis ? "原有结果未被覆盖。" : ""), null);
+        } catch (HttpTimeoutException e) {
+            log.warn("Model timeout: purpose={}, provider={}, model={}, elapsedMs={}, inputChars={}, timeoutSeconds={}", analysis ? "evidence" : "chat", c.provider(), c.model(), (System.nanoTime()-started)/1_000_000, inputChars, timeout.toSeconds());
+            throw new ModelConnectionException("timeout", analysis ? "本轮 AI 梳理等待模型超过 " + timeout.toSeconds() + " 秒，原有结果未被覆盖。可将本轮范围调为最多 20 篇重试；如仍超时，请检查服务商运行状态或切换模型。" : "等待模型响应超时，请稍后重试或切换模型", null);
+        }
         catch (SSLException e) { throw new ModelConnectionException("tls_error", "模型服务的 TLS 连接或证书验证失败，请检查本机网络与证书配置", null); }
         catch (ConnectException e) { throw new ModelConnectionException("network_error", "本机后端无法连接模型服务，请检查网络和 API 地址", null); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new ModelConnectionException("interrupted", "模型请求已中断，请重试", null); }

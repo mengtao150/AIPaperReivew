@@ -3,12 +3,34 @@ package com.reviewer.scout.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import java.net.http.*;
+import java.time.Duration;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class ChatGatewayTest {
     ModelConnection connection(String url) { return new ModelConnection(null, "Test", "custom", url, "test-model", "fake-test-key"); }
+    @Test void analysisHasItsOwnLongRequestBudgetWhileOrdinaryCallsKeepTheirExistingLimit() throws Exception {
+        HttpClient client=mock(HttpClient.class);HttpResponse<String> response=mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);when(response.body()).thenReturn("{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"content\":\"ok\"}}]}");
+        when(client.send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class))).thenReturn(response);
+        ChatGateway gateway=new ChatGateway(client);
+        gateway.complete(connection("https://8.8.8.8"),List.of(),1024);
+        gateway.completeAnalysis(connection("https://8.8.8.8"),List.of(),8000);
+        var requests=org.mockito.ArgumentCaptor.forClass(HttpRequest.class);verify(client,times(2)).send(requests.capture(),any(HttpResponse.BodyHandler.class));
+        assertEquals(Duration.ofSeconds(90),requests.getAllValues().get(0).timeout().orElseThrow());
+        assertEquals(Duration.ofSeconds(300),requests.getAllValues().get(1).timeout().orElseThrow());
+    }
+    @Test void analysisTimeoutReportsTheAppliedBudgetAndPreservesItsErrorCode() throws Exception {
+        HttpClient client=mock(HttpClient.class);when(client.send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class))).thenThrow(new HttpTimeoutException("simulated slow response"));
+        var error=assertThrows(ModelConnectionException.class,()->new ChatGateway(client).completeAnalysis(connection("https://8.8.8.8"),List.of(),8000));
+        assertEquals("timeout",error.getCode());assertTrue(error.getMessage().contains("300"));assertFalse(error.getMessage().contains("fake-test-key"));
+    }
+    @Test void connectionTimeoutIsNotMisreportedAsExhaustingTheAnalysisDeadline() throws Exception {
+        HttpClient client=mock(HttpClient.class);when(client.send(any(HttpRequest.class),any(HttpResponse.BodyHandler.class))).thenThrow(new HttpConnectTimeoutException("simulated connection timeout"));
+        var error=assertThrows(ModelConnectionException.class,()->new ChatGateway(client).completeAnalysis(connection("https://8.8.8.8"),List.of(),8000));
+        assertEquals("network_error",error.getCode());assertTrue(error.getMessage().contains("建立连接"));assertFalse(error.getMessage().contains("300"));
+    }
     @Test void unsafeLocalEndpointsAreRejectedBeforeCredentialsAreSent() {
         ChatGateway gateway = new ChatGateway();
         for (String url : List.of("http://example.com/v1", "https://127.0.0.1", "https://169.254.169.254", "https://[::1]", "https://user:pass@example.com")) assertThrows(IllegalArgumentException.class, () -> gateway.endpoint(connection(url)));

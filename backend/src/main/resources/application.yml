@@ -35,3 +35,6 @@ pubmed:
   tool: reviewer-scout
   email: ${PUBMED_EMAIL:scout@example.org}
   min-interval-ms: 340
+
+models:
+  analysis-timeout-seconds: ${SCOUT_ANALYSIS_TIMEOUT_SECONDS:300}

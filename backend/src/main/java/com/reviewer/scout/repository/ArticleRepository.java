@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface ArticleRepository extends JpaRepository<Article, Long> {
+    java.util.Optional<Article> findByScanRunIdAndPmid(Long scanRunId, String pmid);
     Page<Article> findByScanRunId(Long scanRunId, Pageable pageable);
 
     @Query("SELECT a FROM Article a WHERE a.scanRunId = :scanRunId AND a.id IN " +

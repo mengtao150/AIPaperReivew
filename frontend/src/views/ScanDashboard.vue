@@ -6,7 +6,7 @@
         <div ref="pieChart" style="height:360px"></div>
       </div>
       <div class="panel">
-        <div class="p-title">📈 月度发文趋势</div>
+        <div class="p-title">方向文献数量</div>
         <div ref="trendChart" style="height:360px"></div>
       </div>
     </div>
